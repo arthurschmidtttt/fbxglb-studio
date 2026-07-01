@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FBXGLB Studio</title>
+    <link rel="icon" type="image/png" href="/logo.png" />
+    <link rel="apple-touch-icon" href="/logo.png" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/node_modules/three/build/three.module.js",
+          "three/addons/": "/node_modules/three/examples/jsm/"
+        }
+      }
+    </script>
+    <link rel="stylesheet" href="/studio/style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="logo" aria-hidden="true">
+            <img src="/logo.png" alt="" />
+          </div>
+          <div>
+            <div class="title">FBXGLB Studio</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <span>Project folder</span>
+          <div class="path-row">
+            <input id="inputDir" type="text" spellcheck="false" placeholder="C:\\path\\to\\your\\fbx-folder" />
+            <button id="pickDirBtn" type="button" class="ghost">...</button>
+          </div>
+        </div>
+
+        <div class="row">
+          <button id="exportBtn" type="button" class="accent">Generate GLB preview</button>
+        </div>
+
+        <div class="row">
+          <label class="check">
+            <input id="showRigChk" type="checkbox" checked />
+            <span>Rig</span>
+          </label>
+          <label class="check">
+            <input id="showMeshChk" type="checkbox" checked />
+            <span>Mesh</span>
+          </label>
+          <button id="frameBtn" type="button" class="ghost">Frame</button>
+        </div>
+
+        <input id="folderInput" type="file" webkitdirectory multiple class="file-picker" />
+
+        <div class="section">
+          <div class="section-title">FBX</div>
+          <select id="clipList" size="8"></select>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Animations</div>
+          <div id="animList" class="anim-list"></div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Rig adjustment</div>
+          <label class="mini">
+            <span>Rot X</span><input id="rotX" type="range" min="-180" max="180" value="0" />
+            <input id="rotXOut" class="value" type="number" min="-180" max="180" value="0" />
+          </label>
+          <label class="mini">
+            <span>Rot Y</span><input id="rotY" type="range" min="-180" max="180" value="0" />
+            <input id="rotYOut" class="value" type="number" min="-180" max="180" value="0" />
+          </label>
+          <label class="mini">
+            <span>Rot Z</span><input id="rotZ" type="range" min="-180" max="180" value="0" />
+            <input id="rotZOut" class="value" type="number" min="-180" max="180" value="0" />
+          </label>
+          <label class="mini">
+            <span>X</span><input id="posX" type="range" min="-200" max="200" value="0" />
+            <input id="posXOut" class="value" type="number" min="-200" max="200" value="0" />
+          </label>
+          <label class="mini">
+            <span>Y</span><input id="posY" type="range" min="-200" max="200" value="0" />
+            <input id="posYOut" class="value" type="number" min="-200" max="200" value="0" />
+          </label>
+          <label class="mini">
+            <span>Z</span><input id="posZ" type="range" min="-200" max="200" value="0" />
+            <input id="posZOut" class="value" type="number" min="-200" max="200" value="0" />
+          </label>
+        </div>
+
+        <div id="reviewPanel" class="section hidden">
+          <div class="section-title">GLB review</div>
+          <div class="field tight">
+            <span>Material</span>
+            <select id="materialSelect" size="5"></select>
+          </div>
+          <div class="field tight">
+            <span>Texture source</span>
+            <select id="textureSelect" size="5"></select>
+          </div>
+          <label class="mini">
+            <span>Tint</span>
+            <input id="tintColor" type="color" value="#ffffff" />
+            <input id="tintHex" class="value" type="text" value="#ffffff" spellcheck="false" />
+          </label>
+          <label class="mini">
+            <span>Opacity</span>
+            <input id="opacityRange" type="range" min="0" max="100" value="100" />
+            <input id="opacityOut" class="value" type="number" min="0" max="100" value="100" />
+          </label>
+          <label class="check">
+            <input id="applyAllMaterials" type="checkbox" />
+            <span>Apply to all</span>
+          </label>
+          <div class="row split">
+            <button id="copyTextureBtn" type="button" class="ghost">Copy texture</button>
+            <button id="resetMaterialBtn" type="button" class="ghost">Reset</button>
+          </div>
+        </div>
+
+        <div id="reviewActions" class="row hidden">
+          <button id="backBtn" type="button" class="ghost">Back to FBX</button>
+          <button id="saveFinalBtn" type="button" class="accent">Save final</button>
+        </div>
+
+      </aside>
+
+      <main class="viewport">
+        <canvas id="preview"></canvas>
+        <div id="loadingOverlay" class="loading-overlay hidden">
+          <div class="spinner"></div>
+          <div class="loading-text">Loading model...</div>
+        </div>
+        <div id="toastArea" class="toast-area" aria-live="polite" aria-atomic="true"></div>
+      </main>
+    </div>
+
+    <script type="module" src="/studio/app.mjs"></script>
+  </body>
+  </html>

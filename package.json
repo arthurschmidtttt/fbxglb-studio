@@ -1,0 +1,16 @@
+{
+  "name": "fbx-glb-merge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "merge": "node src/merge-fbx-folder.mjs",
+    "preview": "node src/merge-fbx-folder.mjs --preview",
+    "studio": "node src/studio-server.mjs",
+    "fix": "node src/fix-mixamo.mjs"
+  },
+  "dependencies": {
+    "pngjs": "^7.0.0",
+    "three": "^0.167.0"
+  }
+}
