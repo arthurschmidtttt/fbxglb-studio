@@ -99,6 +99,75 @@ function isSafeAbsolutePath(targetPath) {
   return path.isAbsolute(targetPath) && !targetPath.includes('\0');
 }
 
+function resolveBlenderCommand() {
+  return [
+    process.env.BLENDER_PATH,
+    'blender',
+    'C:\\Program Files\\Blender Foundation\\Blender 5.1\\blender.exe',
+    'C:\\Program Files\\Blender Foundation\\Blender 5.0\\blender.exe',
+    'C:\\Program Files\\Blender Foundation\\Blender 4.5\\blender.exe',
+    'C:\\Program Files\\Blender Foundation\\Blender 4.4\\blender.exe'
+  ].filter(Boolean);
+}
+
+function runProcess(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, options);
+    let stdout = '';
+    let stderr = '';
+
+    if (child.stdout) {
+      child.stdout.on('data', (chunk) => {
+        const text = chunk.toString('utf8');
+        stdout += text;
+        process.stdout.write(text);
+      });
+    }
+
+    if (child.stderr) {
+      child.stderr.on('data', (chunk) => {
+        const text = chunk.toString('utf8');
+        stderr += text;
+        process.stderr.write(text);
+      });
+    }
+
+    child.on('error', (error) => {
+      reject(error);
+    });
+
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error((stderr || stdout).trim() || `${command} exited with code ${code}`));
+      }
+    });
+  });
+}
+
+async function runBlenderScript(scriptPath, scriptArgs, options = {}) {
+  const args = ['--background', '--python', scriptPath, '--', ...scriptArgs];
+  let lastError = null;
+
+  for (const command of resolveBlenderCommand()) {
+    try {
+      await runProcess(command, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        ...options
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (error && error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError || new Error('Blender executable not found.');
+}
+
 function serveFile(res, filePath) {
   const stream = fs.createReadStream(filePath);
   res.writeHead(200, {
@@ -180,7 +249,7 @@ async function main() {
       if (pathname === '/api/export' && req.method === 'POST') {
         const body = await readRequestBody(req);
         const payload = JSON.parse(body);
-        const { inputDir, outputPath, settings = {} } = payload;
+        const { inputDir, outputPath, settings = {}, baseFilePath = '' } = payload;
 
         if (!inputDir || !isSafeAbsolutePath(inputDir)) {
           sendJson(res, 400, { error: 'Invalid inputDir.' });
@@ -193,7 +262,7 @@ async function main() {
 
         const configPath = path.join(rootDir, '.tmp', 'studio-export-config.json');
         await fsp.mkdir(path.dirname(configPath), { recursive: true });
-        await fsp.writeFile(configPath, JSON.stringify({ settings }, null, 2), 'utf8');
+        await fsp.writeFile(configPath, JSON.stringify({ settings, baseFilePath }, null, 2), 'utf8');
 
         await new Promise((resolve, reject) => {
           const child = spawn(process.execPath, [
@@ -217,6 +286,30 @@ async function main() {
             }
           });
         });
+
+        sendJson(res, 200, { ok: true, outputPath: finalOutput });
+        return;
+      }
+
+      if (pathname === '/api/export-mixamo' && req.method === 'POST') {
+        const body = await readRequestBody(req);
+        const payload = JSON.parse(body);
+        const { inputFile, outputPath } = payload;
+
+        if (!inputFile || !isSafeAbsolutePath(inputFile)) {
+          sendJson(res, 400, { error: 'Invalid inputFile.' });
+          return;
+        }
+
+        const finalOutput = outputPath && isSafeAbsolutePath(outputPath)
+          ? outputPath
+          : path.join(path.dirname(inputFile), 'z-avatar-mixamo.fbx');
+
+        await runBlenderScript(
+          path.join(rootDir, 'src', 'blender_mixamo_export.py'),
+          [inputFile, finalOutput],
+          { cwd: rootDir }
+        );
 
         sendJson(res, 200, { ok: true, outputPath: finalOutput });
         return;

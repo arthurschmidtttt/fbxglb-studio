@@ -9,6 +9,10 @@ Tools for turning a folder of animated `.fbx` files into a single `.glb` with em
 - Lets you preview and adjust the model in a browser-based 3D UI.
 - Exports a final `.glb` with the selected animations.
 
+## Preview
+
+![FBXGLB Studio preview](docs/images/01.png)
+
 ## 3D software workflow
 
 This project is designed to work with FBX files exported from 3D tools such as:
@@ -44,6 +48,7 @@ In the studio, you can:
 - Pick the FBX folder with the native folder picker.
 - Preview the rig and mesh.
 - Frame the model in the viewport.
+- Generate a Mixamo-ready FBX from the currently selected source file.
 - Select which animations are included in the final export.
 - Rename animation clips before exporting.
 - Review and tweak material tint, opacity, and texture assignment in GLB preview mode.

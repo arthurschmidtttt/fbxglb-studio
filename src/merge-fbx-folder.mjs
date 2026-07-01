@@ -556,7 +556,209 @@ function clipDuration(clip) {
   return Math.max(0, clipEnd - clipStart);
 }
 
-function buildExportClips(loaded) {
+function makeNamespace(value) {
+  return String(value || 'fbx')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-z0-9]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_{2,}/g, '_') || 'fbx';
+}
+
+function namespaceObject(root, namespace) {
+  if (!root || !namespace) {
+    return root;
+  }
+
+  root.traverse((node) => {
+    if (node.name) {
+      node.name = `${namespace}__${node.name}`;
+    }
+  });
+
+  return root;
+}
+
+function namespaceClip(clip, namespace) {
+  const cloned = clip.clone();
+  if (!namespace) {
+    return cloned;
+  }
+
+  for (const track of cloned.tracks) {
+    const dotIndex = track.name.indexOf('.');
+    if (dotIndex >= 0) {
+      track.name = `${namespace}__${track.name.slice(0, dotIndex)}${track.name.slice(dotIndex)}`;
+    } else {
+      track.name = `${namespace}__${track.name}`;
+    }
+  }
+
+  return cloned;
+}
+
+function detectRigFamilyFromNodeName(name) {
+  if (!name) {
+    return '';
+  }
+
+  if (name.includes('mixamorig')) {
+    return 'mixamo';
+  }
+
+  if (name.includes('CC_Base_')) {
+    return 'cc-base';
+  }
+
+  return '';
+}
+
+function detectRigFamilyFromObject(object) {
+  let family = '';
+  object?.traverse?.((node) => {
+    if (family || !node?.name) {
+      return;
+    }
+    family = detectRigFamilyFromNodeName(node.name);
+  });
+  return family;
+}
+
+const MIXAMO_TO_CC_BASE = new Map([
+  ['mixamorigHips', 'CC_Base_Hip'],
+  ['mixamorigSpine', 'CC_Base_Waist'],
+  ['mixamorigSpine1', 'CC_Base_Spine01'],
+  ['mixamorigSpine2', 'CC_Base_Spine02'],
+  ['mixamorigNeck', 'CC_Base_NeckTwist02'],
+  ['mixamorigHead', 'CC_Base_Head'],
+  ['mixamorigLeftShoulder', 'CC_Base_L_Clavicle'],
+  ['mixamorigLeftArm', 'CC_Base_L_Upperarm'],
+  ['mixamorigLeftForeArm', 'CC_Base_L_Forearm'],
+  ['mixamorigLeftHand', 'CC_Base_L_Hand'],
+  ['mixamorigRightShoulder', 'CC_Base_R_Clavicle'],
+  ['mixamorigRightArm', 'CC_Base_R_Upperarm'],
+  ['mixamorigRightForeArm', 'CC_Base_R_Forearm'],
+  ['mixamorigRightHand', 'CC_Base_R_Hand'],
+  ['mixamorigLeftUpLeg', 'CC_Base_L_Thigh'],
+  ['mixamorigLeftLeg', 'CC_Base_L_Calf'],
+  ['mixamorigLeftFoot', 'CC_Base_L_Foot'],
+  ['mixamorigLeftToeBase', 'CC_Base_L_ToeBase'],
+  ['mixamorigRightUpLeg', 'CC_Base_R_Thigh'],
+  ['mixamorigRightLeg', 'CC_Base_R_Calf'],
+  ['mixamorigRightFoot', 'CC_Base_R_Foot'],
+  ['mixamorigRightToeBase', 'CC_Base_R_ToeBase']
+]);
+
+function mapBoneNameForTargetRig(localName, targetRigFamily) {
+  if (targetRigFamily === 'cc-base' && MIXAMO_TO_CC_BASE.has(localName)) {
+    return MIXAMO_TO_CC_BASE.get(localName);
+  }
+
+  return localName;
+}
+
+function getLocalTrackNodeName(trackName) {
+  const dotIndex = trackName.indexOf('.');
+  return dotIndex >= 0 ? trackName.slice(0, dotIndex) : trackName;
+}
+
+function getClipSourceRigFamily(clip) {
+  for (const track of clip?.tracks || []) {
+    if (typeof track?.name !== 'string') {
+      continue;
+    }
+
+    const family = detectRigFamilyFromNodeName(getLocalTrackNodeName(track.name));
+    if (family) {
+      return family;
+    }
+  }
+
+  return '';
+}
+
+function retargetClipToNamespace(clip, targetNamespace, targetRigFamily = '') {
+  const cloned = clip.clone();
+  if (!targetNamespace) {
+    return cloned;
+  }
+
+  for (const track of cloned.tracks) {
+    if (typeof track?.name !== 'string') {
+      continue;
+    }
+
+    const nodeName = getLocalTrackNodeName(track.name);
+    const suffix = track.name.slice(nodeName.length);
+    const namespaceIndex = nodeName.indexOf('__');
+    const localName = namespaceIndex > 0 ? nodeName.slice(namespaceIndex + 2) : nodeName;
+    const mappedLocalName = mapBoneNameForTargetRig(localName, targetRigFamily);
+    track.name = `${targetNamespace}__${mappedLocalName}${suffix}`;
+  }
+
+  cloned.name = (cloned.name || clip.name || targetNamespace).trim();
+  return cloned;
+}
+
+function applyQuaternionTrackOffset(track, offsetQuaternion) {
+  if (!track || track.ValueTypeName !== 'quaternion' || !offsetQuaternion) {
+    return;
+  }
+
+  for (let i = 0; i < track.values.length; i += 4) {
+    const q = new THREE.Quaternion(
+      track.values[i],
+      track.values[i + 1],
+      track.values[i + 2],
+      track.values[i + 3]
+    );
+    q.premultiply(offsetQuaternion);
+    track.values[i] = q.x;
+    track.values[i + 1] = q.y;
+    track.values[i + 2] = q.z;
+    track.values[i + 3] = q.w;
+  }
+}
+
+function applyClipRootRotationOffset(clip, offsetXDegrees) {
+  if (!clip || !offsetXDegrees) {
+    return clip;
+  }
+
+  const offsetQuaternion = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(THREE.MathUtils.degToRad(offsetXDegrees), 0, 0, 'XYZ')
+  );
+
+  for (const track of clip.tracks || []) {
+    if (typeof track?.name !== 'string') {
+      continue;
+    }
+
+    const nodeName = getLocalTrackNodeName(track.name);
+    if (!nodeName.endsWith('CC_Base_Hip')) {
+      continue;
+    }
+
+    applyQuaternionTrackOffset(track, offsetQuaternion);
+    break;
+  }
+
+  return clip;
+}
+
+function normalizeComparePath(filePath) {
+  return path.resolve(filePath).replace(/\//g, '\\').toLowerCase();
+}
+
+function findLoadedEntryByPath(loaded, filePath) {
+  if (!filePath) {
+    return null;
+  }
+
+  const wanted = normalizeComparePath(filePath);
+  return loaded.find((entry) => normalizeComparePath(entry.filePath) === wanted) || null;
+}
+
+function buildExportClips(loaded, targetNamespace, targetRigFamily) {
   const exportClips = [];
 
   for (const { filePath, object } of loaded) {
@@ -569,7 +771,12 @@ function buildExportClips(loaded) {
         continue;
       }
 
-      const namedClip = sourceClip.clone();
+      const sourceFamily = getClipSourceRigFamily(sourceClip);
+      const needsRootOffset = sourceFamily === 'mixamo' && targetRigFamily === 'cc-base';
+      const namedClip = retargetClipToNamespace(sourceClip, targetNamespace, targetRigFamily);
+      if (needsRootOffset) {
+        applyClipRootRotationOffset(namedClip, -90);
+      }
       namedClip.name = clips.length === 1 ? fileBase : `${fileBase}_${index + 1}`;
       exportClips.push(namedClip);
     }
@@ -694,10 +901,20 @@ async function runDirectMerge(inputDir, outputPath, { preview = false } = {}) {
     loaded.push({ filePath, object });
   }
 
-  const baseScene = sanitizeForExport(loaded[0].object);
-  const exportClips = buildExportClips(loaded);
   const exportConfig = await loadExportConfig();
-  applyRootAdjustments(baseScene, exportConfig.settings || {});
+  const baseEntry = findLoadedEntryByPath(loaded, exportConfig.baseFilePath) || loaded[0];
+  const baseNamespace = makeNamespace(path.basename(baseEntry.filePath, path.extname(baseEntry.filePath)));
+  const targetRigFamily = detectRigFamilyFromObject(baseEntry.object);
+
+  namespaceObject(baseEntry.object, baseNamespace);
+  sanitizeForExport(baseEntry.object);
+  applyRootAdjustments(baseEntry.object, exportConfig.settings || {});
+
+  const baseScene = new THREE.Group();
+  baseScene.name = 'FBXGLBRoot';
+  baseScene.add(baseEntry.object);
+
+  const exportClips = buildExportClips(loaded, baseNamespace, targetRigFamily);
 
   baseScene.updateMatrixWorld(true);
   if (preview) {

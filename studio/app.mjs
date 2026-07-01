@@ -11,10 +11,10 @@ const els = {
   showMeshChk: document.getElementById('showMeshChk'),
   frameBtn: document.getElementById('frameBtn'),
   exportBtn: document.getElementById('exportBtn'),
+  mixamoBtn: document.getElementById('mixamoBtn'),
   reviewPanel: document.getElementById('reviewPanel'),
   reviewActions: document.getElementById('reviewActions'),
   backBtn: document.getElementById('backBtn'),
-  saveFinalBtn: document.getElementById('saveFinalBtn'),
   materialSelect: document.getElementById('materialSelect'),
   textureSelect: document.getElementById('textureSelect'),
   tintColor: document.getElementById('tintColor'),
@@ -57,6 +57,7 @@ const state = {
   mixer: null,
   clock: new THREE.Clock(),
   activeAction: null,
+  activePreviewClip: null,
   mode: 'fbx',
   animations: [],
   animationEntries: [],
@@ -88,8 +89,8 @@ function setLoading(isLoading) {
   els.loadingOverlay.classList.toggle('hidden', !isLoading);
   els.pickDirBtn.disabled = isLoading;
   els.exportBtn.disabled = isLoading;
+  els.mixamoBtn.disabled = isLoading;
   els.backBtn.disabled = isLoading;
-  els.saveFinalBtn.disabled = isLoading;
   els.copyTextureBtn.disabled = isLoading;
   els.resetMaterialBtn.disabled = isLoading;
 }
@@ -106,7 +107,7 @@ function setMode(mode) {
   const reviewMode = mode === 'review';
   els.reviewPanel.classList.toggle('hidden', !reviewMode);
   els.reviewActions.classList.toggle('hidden', !reviewMode);
-  els.exportBtn.textContent = reviewMode ? 'Save final' : 'Generate GLB preview';
+  els.exportBtn.textContent = reviewMode ? 'Generate GLB' : 'Generate GLB preview';
   els.showRigChk.checked = reviewMode ? false : true;
   els.showMeshChk.checked = true;
   els.clipList.disabled = reviewMode;
@@ -149,6 +150,7 @@ function clearCurrentModel() {
   state.animationEntries = [];
   state.currentAnimationIndex = -1;
   state.activeAction = null;
+  state.activePreviewClip = null;
 }
 
 function collectMaterialsFromScene(root) {
@@ -309,11 +311,20 @@ function createAnimationEntries(clips, previousEntries = []) {
     const key = `${clip?.name || ''}::${clip?.duration || 0}::${clip?.tracks?.length || 0}`;
     const previous = previousByKey.get(key);
     const clipName = clip?.name || `Animation ${index + 1}`;
+    const previousTransform = previous?.transform || {};
     return {
       clip,
       include: previous ? previous.include !== false : true,
       exportName: previous ? previous.exportName : clipName,
-      originalName: clipName
+      originalName: clipName,
+      transform: {
+        position: Array.isArray(previousTransform.position) && previousTransform.position.length === 3
+          ? previousTransform.position.slice(0, 3)
+          : [0, 0, 0],
+        rotationDegrees: Array.isArray(previousTransform.rotationDegrees) && previousTransform.rotationDegrees.length === 3
+          ? previousTransform.rotationDegrees.slice(0, 3)
+          : [0, 0, 0]
+      }
     };
   });
 }
@@ -350,6 +361,52 @@ function refreshAnimationPanel() {
     row.appendChild(check);
     row.appendChild(name);
     row.appendChild(play);
+
+    const transform = entry.transform || {};
+    const transformBlock = document.createElement('div');
+    transformBlock.className = 'anim-transform';
+    transformBlock.style.gridColumn = '1 / -1';
+    transformBlock.hidden = index !== state.currentAnimationIndex;
+
+    const createMiniField = (labelText, action, value, step = '1') => {
+      const label = document.createElement('label');
+      label.className = 'mini compact';
+      const span = document.createElement('span');
+      span.textContent = labelText;
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.step = step;
+      input.value = String(value);
+      input.dataset.action = action;
+      label.appendChild(span);
+      label.appendChild(input);
+      return label;
+    };
+
+    const posWrap = document.createElement('div');
+    posWrap.className = 'anim-transform-grid';
+    posWrap.appendChild(createMiniField('Pos X', 'anim-pos-x', transform.position?.[0] ?? 0, '0.1'));
+    posWrap.appendChild(createMiniField('Pos Y', 'anim-pos-y', transform.position?.[1] ?? 0, '0.1'));
+    posWrap.appendChild(createMiniField('Pos Z', 'anim-pos-z', transform.position?.[2] ?? 0, '0.1'));
+
+    const rotWrap = document.createElement('div');
+    rotWrap.className = 'anim-transform-grid';
+    rotWrap.appendChild(createMiniField('Rot X', 'anim-rot-x', transform.rotationDegrees?.[0] ?? 0, '1'));
+    rotWrap.appendChild(createMiniField('Rot Y', 'anim-rot-y', transform.rotationDegrees?.[1] ?? 0, '1'));
+    rotWrap.appendChild(createMiniField('Rot Z', 'anim-rot-z', transform.rotationDegrees?.[2] ?? 0, '1'));
+
+    const posTitle = document.createElement('div');
+    posTitle.className = 'anim-transform-title';
+    posTitle.textContent = 'Position';
+    const rotTitle = document.createElement('div');
+    rotTitle.className = 'anim-transform-title';
+    rotTitle.textContent = 'Direction';
+
+    transformBlock.appendChild(posTitle);
+    transformBlock.appendChild(posWrap);
+    transformBlock.appendChild(rotTitle);
+    transformBlock.appendChild(rotWrap);
+    row.appendChild(transformBlock);
     els.animList.appendChild(row);
   });
 }
@@ -369,6 +426,28 @@ function updateAnimationEntryFromRow(row) {
   if (entry.clip) {
     entry.clip.name = exportName;
   }
+
+  const readNumber = (action) => {
+    const input = row.querySelector(`input[data-action="${action}"]`);
+    const value = Number(input?.value);
+    return Number.isFinite(value) ? value : 0;
+  };
+
+  entry.transform = entry.transform || {};
+  entry.transform.position = [
+    readNumber('anim-pos-x'),
+    readNumber('anim-pos-y'),
+    readNumber('anim-pos-z')
+  ];
+  entry.transform.rotationDegrees = [
+    readNumber('anim-rot-x'),
+    readNumber('anim-rot-y'),
+    readNumber('anim-rot-z')
+  ];
+}
+
+function getSelectedAnimationEntries() {
+  return state.animationEntries.filter((entry) => entry.include !== false && entry.clip);
 }
 
 function getSelectedAnimationClips() {
@@ -379,6 +458,454 @@ function getSelectedAnimationClips() {
       clip.name = (entry.exportName || entry.clip.name || '').trim() || entry.originalName || entry.clip.name || 'Animation';
       return clip;
     });
+}
+
+function cloneEntryTransform(entry) {
+  const transform = entry?.transform || {};
+  return {
+    position: Array.isArray(transform.position) && transform.position.length === 3
+      ? transform.position.slice(0, 3)
+      : [0, 0, 0],
+    rotationDegrees: Array.isArray(transform.rotationDegrees) && transform.rotationDegrees.length === 3
+      ? transform.rotationDegrees.slice(0, 3)
+      : [0, 0, 0]
+  };
+}
+
+function getRootBoneNamesForRigFamily(rigFamily) {
+  if (rigFamily === 'mixamo') {
+    return ['mixamorigHips'];
+  }
+
+  if (rigFamily === 'cc-base') {
+    return ['CC_Base_Hip'];
+  }
+
+  return [];
+}
+
+function getSelectedReviewBranchRoots() {
+  const roots = [];
+  const seen = new Set();
+
+  for (const entry of getSelectedAnimationEntries()) {
+    if (entry.include === false || !entry.clip) {
+      continue;
+    }
+
+    const namespace = getClipNamespace(entry.clip);
+    const selectedMesh = pickBestReviewSkinnedMesh(entry.clip, namespace);
+    const branchRoot = getReviewBranchRoot(selectedMesh);
+    if (!branchRoot || seen.has(branchRoot)) {
+      continue;
+    }
+
+    seen.add(branchRoot);
+    roots.push(branchRoot);
+  }
+
+  return roots;
+}
+
+function getTrackNodeLocalName(trackName) {
+  const nodeName = getLocalTrackNodeName(trackName);
+  const namespaceIndex = nodeName.indexOf('__');
+  return namespaceIndex > 0 ? nodeName.slice(namespaceIndex + 2) : nodeName;
+}
+
+function applyVectorTrackOffset(track, offsetVector) {
+  if (!track || track.ValueTypeName !== 'vector' || !offsetVector) {
+    return;
+  }
+
+  for (let i = 0; i < track.values.length; i += 3) {
+    track.values[i] += Number(offsetVector.x) || 0;
+    track.values[i + 1] += Number(offsetVector.y) || 0;
+    track.values[i + 2] += Number(offsetVector.z) || 0;
+  }
+}
+
+function buildAnimationPreviewClip(entry, sourceRigFamily = '') {
+  if (!entry?.clip) {
+    return null;
+  }
+
+  const clip = entry.clip.clone();
+  const transform = cloneEntryTransform(entry);
+  const rootNames = getRootBoneNamesForRigFamily(sourceRigFamily || detectRigFamilyFromClip(clip));
+  const rootNameSet = new Set(rootNames);
+  const fallbackRoot = getTrackNodeLocalName(clip.tracks?.find((track) => typeof track?.name === 'string')?.name || '');
+
+  const rotation = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(
+      THREE.MathUtils.degToRad(Number(transform.rotationDegrees?.[0]) || 0),
+      THREE.MathUtils.degToRad(Number(transform.rotationDegrees?.[1]) || 0),
+      THREE.MathUtils.degToRad(Number(transform.rotationDegrees?.[2]) || 0),
+      'XYZ'
+    )
+  );
+
+  for (const track of clip.tracks || []) {
+    if (typeof track?.name !== 'string') {
+      continue;
+    }
+
+    const localName = getTrackNodeLocalName(track.name);
+    const isRootTrack = rootNameSet.size
+      ? rootNameSet.has(localName)
+      : localName === fallbackRoot;
+
+    if (!isRootTrack) {
+      continue;
+    }
+
+    if (track.ValueTypeName === 'vector' && track.name.endsWith('.position')) {
+      applyVectorTrackOffset(track, new THREE.Vector3(
+        (Number(transform.position?.[0]) || 0) / 100,
+        (Number(transform.position?.[1]) || 0) / 100,
+        (Number(transform.position?.[2]) || 0) / 100
+      ));
+    }
+
+    if (track.ValueTypeName === 'quaternion' && track.name.endsWith('.quaternion')) {
+      applyQuaternionTrackOffset(track, rotation);
+    }
+  }
+
+  return clip;
+}
+
+function applyRigVisibility(rigOnly) {
+  state.rigOnly = rigOnly;
+  if (!state.model) return;
+
+  state.model.traverse((obj) => {
+    if (obj.isMesh) {
+      obj.visible = !rigOnly;
+    }
+  });
+}
+
+function getLocalTrackNodeName(trackName) {
+  const dotIndex = trackName.indexOf('.');
+  return dotIndex >= 0 ? trackName.slice(0, dotIndex) : trackName;
+}
+
+function detectRigFamilyFromNodeName(name) {
+  if (!name) {
+    return '';
+  }
+
+  if (name.includes('mixamorig')) {
+    return 'mixamo';
+  }
+
+  if (name.includes('CC_Base_')) {
+    return 'cc-base';
+  }
+
+  return '';
+}
+
+function detectRigFamilyFromClip(clip) {
+  for (const track of clip?.tracks || []) {
+    if (typeof track?.name !== 'string') {
+      continue;
+    }
+    const family = detectRigFamilyFromNodeName(getLocalTrackNodeName(track.name));
+    if (family) {
+      return family;
+    }
+  }
+
+  return '';
+}
+
+function detectRigFamilyFromObject(object) {
+  let family = '';
+  object?.traverse?.((node) => {
+    if (family || !node?.name) {
+      return;
+    }
+    family = detectRigFamilyFromNodeName(node.name);
+  });
+  return family;
+}
+
+const MIXAMO_TO_CC_BASE = new Map([
+  ['mixamorigHips', 'CC_Base_Hip'],
+  ['mixamorigSpine', 'CC_Base_Waist'],
+  ['mixamorigSpine1', 'CC_Base_Spine01'],
+  ['mixamorigSpine2', 'CC_Base_Spine02'],
+  ['mixamorigNeck', 'CC_Base_NeckTwist02'],
+  ['mixamorigHead', 'CC_Base_Head'],
+  ['mixamorigLeftShoulder', 'CC_Base_L_Clavicle'],
+  ['mixamorigLeftArm', 'CC_Base_L_Upperarm'],
+  ['mixamorigLeftForeArm', 'CC_Base_L_Forearm'],
+  ['mixamorigLeftHand', 'CC_Base_L_Hand'],
+  ['mixamorigRightShoulder', 'CC_Base_R_Clavicle'],
+  ['mixamorigRightArm', 'CC_Base_R_Upperarm'],
+  ['mixamorigRightForeArm', 'CC_Base_R_Forearm'],
+  ['mixamorigRightHand', 'CC_Base_R_Hand'],
+  ['mixamorigLeftUpLeg', 'CC_Base_L_Thigh'],
+  ['mixamorigLeftLeg', 'CC_Base_L_Calf'],
+  ['mixamorigLeftFoot', 'CC_Base_L_Foot'],
+  ['mixamorigLeftToeBase', 'CC_Base_L_ToeBase'],
+  ['mixamorigRightUpLeg', 'CC_Base_R_Thigh'],
+  ['mixamorigRightLeg', 'CC_Base_R_Calf'],
+  ['mixamorigRightFoot', 'CC_Base_R_Foot'],
+  ['mixamorigRightToeBase', 'CC_Base_R_ToeBase']
+]);
+
+function mapBoneNameForTargetRig(localName, targetRigFamily) {
+  if (targetRigFamily === 'cc-base' && MIXAMO_TO_CC_BASE.has(localName)) {
+    return MIXAMO_TO_CC_BASE.get(localName);
+  }
+
+  return localName;
+}
+
+function retargetClipToNamespace(clip, targetNamespace, targetRigFamily = '') {
+  const cloned = clip.clone();
+  if (!targetNamespace) {
+    return cloned;
+  }
+
+  for (const track of cloned.tracks) {
+    if (typeof track?.name !== 'string') {
+      continue;
+    }
+
+    const nodeName = getLocalTrackNodeName(track.name);
+    const suffix = track.name.slice(nodeName.length);
+    const namespaceIndex = nodeName.indexOf('__');
+    const localName = namespaceIndex > 0 ? nodeName.slice(namespaceIndex + 2) : nodeName;
+    const mappedLocalName = mapBoneNameForTargetRig(localName, targetRigFamily);
+    track.name = `${targetNamespace}__${mappedLocalName}${suffix}`;
+  }
+
+  cloned.name = (cloned.name || clip.name || targetNamespace).trim();
+  return cloned;
+}
+
+function applyQuaternionTrackOffset(track, offsetQuaternion) {
+  if (!track || track.ValueTypeName !== 'quaternion' || !offsetQuaternion) {
+    return;
+  }
+
+  for (let i = 0; i < track.values.length; i += 4) {
+    const q = new THREE.Quaternion(
+      track.values[i],
+      track.values[i + 1],
+      track.values[i + 2],
+      track.values[i + 3]
+    );
+    q.premultiply(offsetQuaternion);
+    track.values[i] = q.x;
+    track.values[i + 1] = q.y;
+    track.values[i + 2] = q.z;
+    track.values[i + 3] = q.w;
+  }
+}
+
+function applyClipRootRotationOffset(clip, offsetXDegrees) {
+  if (!clip || !offsetXDegrees) {
+    return clip;
+  }
+
+  const offsetQuaternion = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(THREE.MathUtils.degToRad(offsetXDegrees), 0, 0, 'XYZ')
+  );
+
+  for (const track of clip.tracks || []) {
+    if (typeof track?.name !== 'string') {
+      continue;
+    }
+
+    const nodeName = getLocalTrackNodeName(track.name);
+    if (!nodeName.endsWith('CC_Base_Hip')) {
+      continue;
+    }
+
+    applyQuaternionTrackOffset(track, offsetQuaternion);
+    break;
+  }
+
+  return clip;
+}
+
+function getTargetRigFamilyFromBranch(branchRoot) {
+  return detectRigFamilyFromObject(branchRoot);
+}
+
+function getClipNamespace(clip) {
+  for (const track of clip?.tracks || []) {
+    if (typeof track?.name !== 'string') continue;
+    const dotIndex = track.name.indexOf('.');
+    const nodeName = dotIndex >= 0 ? track.name.slice(0, dotIndex) : track.name;
+    const namespaceIndex = nodeName.indexOf('__');
+    if (namespaceIndex > 0) {
+      return nodeName.slice(0, namespaceIndex);
+    }
+  }
+  return '';
+}
+
+function getClipNodeNames(clip) {
+  const names = new Set();
+  for (const track of clip?.tracks || []) {
+    if (typeof track?.name !== 'string') continue;
+    const dotIndex = track.name.indexOf('.');
+    const nodeName = dotIndex >= 0 ? track.name.slice(0, dotIndex) : track.name;
+    if (nodeName) {
+      names.add(nodeName);
+    }
+  }
+  return names;
+}
+
+function getSkeletonMatchScore(skinnedMesh, targetNames) {
+  const bones = skinnedMesh?.skeleton?.bones || [];
+  let score = 0;
+  for (const bone of bones) {
+    if (targetNames.has(bone.name)) {
+      score += 1;
+    }
+  }
+  return score;
+}
+
+function pickBestReviewSkinnedMesh(clip, namespace = '') {
+  const targetNames = getClipNodeNames(clip);
+  if (!state.model || !targetNames.size) {
+    return null;
+  }
+
+  let bestMesh = null;
+  let bestScore = 0;
+  state.model.traverse((node) => {
+    if (!node.isSkinnedMesh) {
+      return;
+    }
+    if (namespace && !node.name.startsWith(`${namespace}__`)) {
+      return;
+    }
+
+    const score = getSkeletonMatchScore(node, targetNames);
+    if (score > bestScore) {
+      bestScore = score;
+      bestMesh = node;
+    }
+  });
+
+  return bestMesh;
+}
+
+function getReviewBranchRoot(selectedMesh) {
+  if (!selectedMesh || !state.model) {
+    return selectedMesh || null;
+  }
+
+  const containerRoot = state.model.children?.[0] || state.model;
+  let current = selectedMesh;
+  while (current?.parent && current.parent !== containerRoot) {
+    current = current.parent;
+  }
+
+  return current || selectedMesh;
+}
+
+function getSkeletonHelperRoot(selectedMesh) {
+  if (!selectedMesh) {
+    return null;
+  }
+
+  const containerRoot = state.model?.children?.[0] || state.model || null;
+  let current = selectedMesh.parent || selectedMesh;
+
+  while (current && current !== containerRoot) {
+    if (current.children?.some((child) => child.isBone)) {
+      return current;
+    }
+    current = current.parent;
+  }
+
+  const bones = selectedMesh.skeleton?.bones || [];
+  if (bones.length) {
+    return bones[0];
+  }
+
+  return selectedMesh;
+}
+
+function setReviewSelectionHelpers(selectedMesh) {
+  if (state.skeletonHelper) {
+    scene.remove(state.skeletonHelper);
+    state.skeletonHelper = null;
+  }
+
+  if (state.boxHelper) {
+    scene.remove(state.boxHelper);
+    state.boxHelper = null;
+  }
+
+  if (!selectedMesh) {
+    return;
+  }
+
+  state.skeletonHelper = new THREE.SkeletonHelper(getSkeletonHelperRoot(selectedMesh));
+  state.skeletonHelper.material.linewidth = 2;
+  state.skeletonHelper.material.color.set(0x4dd0ff);
+  scene.add(state.skeletonHelper);
+
+  state.boxHelper = new THREE.BoxHelper(selectedMesh, 0xffb703);
+  scene.add(state.boxHelper);
+}
+
+function applyReviewClipVisibility(clip) {
+  if (!state.model || state.mode !== 'review') {
+    return;
+  }
+
+  const namespace = getClipNamespace(clip);
+  const selectedMesh = pickBestReviewSkinnedMesh(clip, namespace);
+  const branchRoot = getReviewBranchRoot(selectedMesh);
+
+  if (!branchRoot) {
+    state.model.traverse((node) => {
+      node.visible = true;
+    });
+    setReviewSelectionHelpers(null);
+    return;
+  }
+
+  state.model.traverse((node) => {
+    node.visible = false;
+  });
+
+  state.model.visible = true;
+  const containerRoot = state.model.children?.[0] || state.model;
+  containerRoot.visible = true;
+  branchRoot.visible = true;
+  const showMesh = Boolean(els.showMeshChk?.checked);
+  branchRoot.traverse((node) => {
+    node.visible = node.isMesh ? showMesh : true;
+  });
+
+  let current = branchRoot.parent;
+  while (current && current !== containerRoot) {
+    current.visible = true;
+    current = current.parent;
+  }
+
+  setReviewSelectionHelpers(selectedMesh);
+  const showRig = Boolean(els.showRigChk?.checked);
+  if (state.skeletonHelper) {
+    state.skeletonHelper.visible = showRig;
+  }
+  if (state.boxHelper) {
+    state.boxHelper.visible = showMesh;
+  }
 }
 
 function playAnimationIndex(index) {
@@ -392,11 +919,23 @@ function playAnimationIndex(index) {
   }
 
   state.activeAction?.stop();
-  state.activeAction = state.mixer.clipAction(entry.clip);
+  if (state.activePreviewClip) {
+    state.mixer.uncacheClip(state.activePreviewClip);
+    state.activePreviewClip = null;
+  }
+
+  state.activePreviewClip = buildAnimationPreviewClip(entry);
+  state.activeAction = state.activePreviewClip ? state.mixer.clipAction(state.activePreviewClip) : null;
+  if (!state.activeAction) {
+    return;
+  }
   state.activeAction.reset().play();
   state.mixer.setTime(0);
   state.mixer.update(0);
   state.currentAnimationIndex = index;
+  if (state.mode === 'review') {
+    applyReviewClipVisibility(entry.clip);
+  }
   refreshAnimationPanel();
 }
 
@@ -622,23 +1161,24 @@ function frameObject(object) {
   controls.update();
 }
 
-function applyRigVisibility(rigOnly) {
-  state.rigOnly = rigOnly;
-  if (!state.model) return;
-
-  state.model.traverse((obj) => {
-    if (obj.isMesh) {
-      obj.visible = !rigOnly;
-    }
-  });
-}
-
 function applyVisibilityFromControls() {
   const showRig = Boolean(els.showRigChk?.checked);
   const showMesh = Boolean(els.showMeshChk?.checked);
   state.rigOnly = showRig && !showMesh;
 
   if (!state.model) {
+    return;
+  }
+
+  if (state.mode === 'review') {
+    const currentClip = state.animationEntries[state.currentAnimationIndex]?.clip;
+    applyReviewClipVisibility(currentClip);
+    if (state.skeletonHelper) {
+      state.skeletonHelper.visible = showRig;
+    }
+    if (state.boxHelper) {
+      state.boxHelper.visible = showMesh;
+    }
     return;
   }
 
@@ -651,6 +1191,39 @@ function applyVisibilityFromControls() {
   if (state.skeletonHelper) {
     state.skeletonHelper.visible = showRig;
   }
+}
+
+function syncMaterialTextureColorSpaces(root) {
+  root?.traverse?.((object) => {
+    if (!object.isMesh || !object.material) {
+      return;
+    }
+
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of materials) {
+      if (!material) continue;
+
+      if (material.map) {
+        material.map.colorSpace = THREE.SRGBColorSpace;
+      }
+      if (material.emissiveMap) {
+        material.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+      }
+      if (material.normalMap) {
+        material.normalMap.colorSpace = THREE.NoColorSpace;
+      }
+      if (material.alphaMap) {
+        material.alphaMap.colorSpace = THREE.NoColorSpace;
+      }
+      if (material.metalnessMap) {
+        material.metalnessMap.colorSpace = THREE.NoColorSpace;
+      }
+      if (material.roughnessMap) {
+        material.roughnessMap.colorSpace = THREE.NoColorSpace;
+      }
+      material.needsUpdate = true;
+    }
+  });
 }
 
 function autoFrameCurrentModel() {
@@ -733,6 +1306,10 @@ async function loadFbx(filePath) {
       manager.onError = () => {};
     });
     manager.setURLModifier((url) => {
+      if (typeof url === 'string' && (url.startsWith('blob:') || url.startsWith('data:'))) {
+        return url;
+      }
+
       const candidate = resolveTextureCandidate(filePath, url);
       if (!candidate) {
         return fallbackTextureUrl;
@@ -800,6 +1377,7 @@ async function loadFbx(filePath) {
     if (state.animationEntries.length) {
       playAnimationIndex(0);
     }
+    syncMaterialTextureColorSpaces(model);
     previewTransform();
     await loadingDone;
     state.selectedFile = filePath;
@@ -930,7 +1508,7 @@ function exportSceneToBlob(scene, animations) {
         binary: true,
         animations,
         trs: false,
-        onlyVisible: false,
+        onlyVisible: true,
         forceIndices: true
       }
     );
@@ -945,9 +1523,15 @@ async function generateReviewGlb() {
   }
 
   const tempPath = pathJoin(exportDir, '.fg-studio-review.glb');
+  if (!state.selectedFile) {
+    showToast('Choose the base FBX before generating the preview.', 'error');
+    return;
+  }
+
   const payload = {
     inputDir: exportDir,
     outputPath: tempPath,
+    baseFilePath: state.selectedFile,
     settings: {
       rootRotationDegrees: [
         Number(els.rotX.value),
@@ -994,11 +1578,67 @@ async function generateReviewGlb() {
   }
 }
 
+async function generateMixamoFbx() {
+  const inputFile = state.selectedFile || els.clipList.value || '';
+  if (!inputFile) {
+    showToast('Choose an FBX file first.', 'error');
+    return;
+  }
+
+  setLoading(true);
+  setStatus('Generating Mixamo FBX...');
+  showToast('Generating Mixamo FBX...', 'info', 2600);
+
+  try {
+    const response = await fetch('/api/export-mixamo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inputFile })
+    });
+
+    const raw = await response.text();
+    let data = {};
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = { error: raw };
+    }
+
+    if (!response.ok) {
+      throw new Error(data.error || `Mixamo export failed (${response.status}).`);
+    }
+
+    const outputPath = data.outputPath || '';
+    const outputName = outputPath ? pathBasename(outputPath) : 'z-avatar-mixamo.fbx';
+    showToast(`Mixamo FBX exported: ${outputName}`, 'success', 6000);
+    setStatus(`Mixamo FBX exported: ${outputPath || outputName}`);
+  } catch (error) {
+    showError(error);
+  } finally {
+    setLoading(false);
+  }
+}
+
 async function saveFinalGlb() {
   if (!state.model) {
     showToast('No GLB is loaded to save.', 'error');
     return;
   }
+
+  const exportEntries = getSelectedAnimationEntries();
+  if (!exportEntries.length) {
+    showToast('Select at least one animation to export.', 'error');
+    return;
+  }
+  const baseEntry = exportEntries[0];
+  const baseNamespace = getClipNamespace(baseEntry.clip) || '';
+  const baseMesh = pickBestReviewSkinnedMesh(baseEntry.clip, baseNamespace);
+  const baseBranchRoot = getReviewBranchRoot(baseMesh);
+  if (!baseBranchRoot) {
+    showToast('Select at least one animation to export.', 'error');
+    return;
+  }
+  const targetRigFamily = getTargetRigFamilyFromBranch(baseBranchRoot);
 
   if (typeof window.showSaveFilePicker !== 'function') {
     showToast('This browser does not support the native save picker.', 'error');
@@ -1027,8 +1667,42 @@ async function saveFinalGlb() {
   setLoading(true);
   setStatus('Saving final GLB...');
   showToast('Saving final GLB...', 'info', 2600);
+  const visibilitySnapshot = new Map();
   try {
-    const blob = await exportSceneToBlob(state.model, getSelectedAnimationClips());
+    const exportAnimations = exportEntries.map((entry) => {
+      const clip = retargetClipToNamespace(entry.clip, baseNamespace, targetRigFamily);
+      const transformedClip = buildAnimationPreviewClip({
+        clip,
+        transform: cloneEntryTransform(entry)
+      }, targetRigFamily);
+      const finalClip = transformedClip || clip;
+      const sourceRigFamily = detectRigFamilyFromClip(entry.clip);
+      if (sourceRigFamily === 'mixamo' && targetRigFamily === 'cc-base') {
+        applyClipRootRotationOffset(finalClip, -90);
+      }
+      finalClip.name = (entry.exportName || entry.clip.name || '').trim() || entry.originalName || entry.clip.name || 'Animation';
+      return finalClip;
+    });
+
+    state.model.traverse((node) => {
+      visibilitySnapshot.set(node, node.visible);
+      node.visible = false;
+    });
+
+    state.model.visible = true;
+    const containerRoot = state.model.children?.[0] || state.model;
+    containerRoot.visible = true;
+    let current = baseBranchRoot;
+    while (current && current !== containerRoot) {
+      current.visible = true;
+      current = current.parent;
+    }
+    baseBranchRoot.visible = true;
+    baseBranchRoot.traverse((node) => {
+      node.visible = true;
+    });
+
+    const blob = await exportSceneToBlob(state.model, exportAnimations);
     const writable = await outputHandle.createWritable();
     await writable.write(blob);
     await writable.close();
@@ -1036,6 +1710,13 @@ async function saveFinalGlb() {
   } catch (error) {
     showError(error);
   } finally {
+    if (state.model) {
+      state.model.traverse((node) => {
+        if (visibilitySnapshot.has(node)) {
+          node.visible = visibilitySnapshot.get(node);
+        }
+      });
+    }
     setLoading(false);
   }
 }
@@ -1172,6 +1853,10 @@ els.animList.addEventListener('change', (event) => {
 
   updateAnimationEntryFromRow(row);
   refreshAnimationPanel();
+  const index = Number(row.dataset.index);
+  if (index === state.currentAnimationIndex) {
+    playAnimationIndex(index);
+  }
 });
 
 els.animList.addEventListener('input', (event) => {
@@ -1181,6 +1866,11 @@ els.animList.addEventListener('input', (event) => {
   }
 
   updateAnimationEntryFromRow(row);
+  const index = Number(row.dataset.index);
+  const action = event.target?.dataset?.action || '';
+  if (index === state.currentAnimationIndex && action.startsWith('anim-')) {
+    playAnimationIndex(index);
+  }
 });
 
 const rigPairs = [
@@ -1241,9 +1931,6 @@ els.backBtn.addEventListener('click', async () => {
   }
   await loadFbx(state.selectedFile);
 });
-els.saveFinalBtn.addEventListener('click', async () => {
-  await saveFinalGlb();
-});
 
 els.exportBtn.addEventListener('click', async () => {
   if (state.mode === 'review') {
@@ -1252,6 +1939,10 @@ els.exportBtn.addEventListener('click', async () => {
   }
 
   await generateReviewGlb();
+});
+
+els.mixamoBtn.addEventListener('click', async () => {
+  await generateMixamoFbx();
 });
 
 window.addEventListener('error', (event) => {

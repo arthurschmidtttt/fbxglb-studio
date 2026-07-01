@@ -2,5 +2,6 @@
 .blender-tmp/
 node_modules/
 merged*.glb
+*_mixamo.fbx
 *.pyc
 __pycache__/
