@@ -330,6 +330,8 @@ function createAnimationEntries(clips, previousEntries = []) {
 }
 
 function refreshAnimationPanel() {
+  const scrollTop = els.animList.scrollTop;
+  const scrollLeft = els.animList.scrollLeft;
   els.animList.innerHTML = '';
 
   state.animationEntries.forEach((entry, index) => {
@@ -408,6 +410,11 @@ function refreshAnimationPanel() {
     transformBlock.appendChild(rotWrap);
     row.appendChild(transformBlock);
     els.animList.appendChild(row);
+  });
+
+  requestAnimationFrame(() => {
+    els.animList.scrollTop = scrollTop;
+    els.animList.scrollLeft = scrollLeft;
   });
 }
 
