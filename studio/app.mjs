@@ -62,6 +62,9 @@ const state = {
   animations: [],
   animationEntries: [],
   currentAnimationIndex: -1,
+  reviewSelectedMesh: null,
+  reviewBranchRoot: null,
+  reviewNamespace: '',
   reviewMaterials: [],
   reviewMaterialSnapshot: new Map(),
   reviewTempPath: ''
@@ -151,6 +154,9 @@ function clearCurrentModel() {
   state.currentAnimationIndex = -1;
   state.activeAction = null;
   state.activePreviewClip = null;
+  state.reviewSelectedMesh = null;
+  state.reviewBranchRoot = null;
+  state.reviewNamespace = '';
 }
 
 function collectMaterialsFromScene(root) {
@@ -455,6 +461,27 @@ function updateAnimationEntryFromRow(row) {
 
 function getSelectedAnimationEntries() {
   return state.animationEntries.filter((entry) => entry.include !== false && entry.clip);
+}
+
+function syncAnimationEntriesFromPanel() {
+  for (const row of els.animList.querySelectorAll('.anim-item')) {
+    updateAnimationEntryFromRow(row);
+  }
+}
+
+function getSelectedAnimationEntriesFromPanel() {
+  const entries = [];
+  for (const row of els.animList.querySelectorAll('.anim-item')) {
+    updateAnimationEntryFromRow(row);
+    const index = Number(row?.dataset?.index);
+    const entry = state.animationEntries[index];
+    const check = row.querySelector('input[data-action="toggle-animation"]');
+    if (entry && entry.clip && check?.checked) {
+      entries.push(entry);
+    }
+  }
+
+  return entries;
 }
 
 function getSelectedAnimationClips() {
@@ -822,6 +849,22 @@ function getReviewBranchRoot(selectedMesh) {
   return current || selectedMesh;
 }
 
+function getAnyReviewBranchRoot() {
+  if (!state.model) {
+    return null;
+  }
+
+  let selectedMesh = null;
+  state.model.traverse((node) => {
+    if (selectedMesh || !node.isSkinnedMesh) {
+      return;
+    }
+    selectedMesh = node;
+  });
+
+  return selectedMesh ? getReviewBranchRoot(selectedMesh) : null;
+}
+
 function getSkeletonHelperRoot(selectedMesh) {
   if (!selectedMesh) {
     return null;
@@ -877,6 +920,9 @@ function applyReviewClipVisibility(clip) {
   const namespace = getClipNamespace(clip);
   const selectedMesh = pickBestReviewSkinnedMesh(clip, namespace);
   const branchRoot = getReviewBranchRoot(selectedMesh);
+  state.reviewSelectedMesh = selectedMesh || null;
+  state.reviewBranchRoot = branchRoot || null;
+  state.reviewNamespace = namespace || '';
 
   if (!branchRoot) {
     state.model.traverse((node) => {
@@ -1632,17 +1678,33 @@ async function saveFinalGlb() {
     return;
   }
 
-  const exportEntries = getSelectedAnimationEntries();
+  const exportEntries = getSelectedAnimationEntriesFromPanel();
   if (!exportEntries.length) {
     showToast('Select at least one animation to export.', 'error');
     return;
   }
-  const baseEntry = exportEntries[0];
-  const baseNamespace = getClipNamespace(baseEntry.clip) || '';
-  const baseMesh = pickBestReviewSkinnedMesh(baseEntry.clip, baseNamespace);
-  const baseBranchRoot = getReviewBranchRoot(baseMesh);
+  let baseBranchRoot = state.reviewBranchRoot || getAnyReviewBranchRoot();
+  let baseNamespace = state.reviewNamespace || '';
+  let baseEntry = null;
+
   if (!baseBranchRoot) {
-    showToast('Select at least one animation to export.', 'error');
+    for (const entry of exportEntries) {
+      const namespace = getClipNamespace(entry.clip) || '';
+      const selectedMesh = pickBestReviewSkinnedMesh(entry.clip, namespace);
+      const branchRoot = getReviewBranchRoot(selectedMesh);
+      if (branchRoot) {
+        baseEntry = entry;
+        baseBranchRoot = branchRoot;
+        baseNamespace = namespace;
+        break;
+      }
+    }
+  } else {
+    baseEntry = exportEntries.find((entry) => entry.clip) || null;
+  }
+
+  if (!baseBranchRoot || !baseEntry) {
+    showToast('No exportable rig was found in the current preview.', 'error');
     return;
   }
   const targetRigFamily = getTargetRigFamilyFromBranch(baseBranchRoot);
